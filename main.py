@@ -1,80 +1,59 @@
-import os
-import numpy as np
 import pandas as pd
-from skimage import io, color, exposure
-from skimage.feature import graycomatrix, graycoprops
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-def przetworz_obrazy_i_oblicz_cechy(katalog_wejsciowy, wyjscie_csv):
+def wczytaj_dane(sciezka_csv):
 
-    #Funkcja przetwarza obrazy z katalogu wejściowego, oblicza cechy tekstur
-    #na podstawie macierzy zdarzeń GLCM i zapisuje wyniki do pliku CSV.
+    # Wczytuje dane z pliku CSV
 
+    return pd.read_csv(sciezka_csv)
 
-    wyniki = []
+def klasyfikacja_wektorow(dane):
 
-    # Definicja odległości i kątów do analizy
-    odleglosci = [1, 3, 5]
-    katy = [0, np.pi/4, np.pi/2, 3*np.pi/4]  # 0, 45, 90, 135 stopni
-
-
-    for kategoria in os.listdir(katalog_wejsciowy):
-        sciezka_kategorii = os.path.join(katalog_wejsciowy, kategoria)
-
-        if os.path.isdir(sciezka_kategorii):
-            for nazwa_obrazu in os.listdir(sciezka_kategorii):
-                sciezka_obrazu = os.path.join(sciezka_kategorii, nazwa_obrazu)
+    # Funkcjado do przeprowadzenia klasyfikacji wektorów cech przy użyciu SVM i wyświetlenia wyników
 
 
-                try:
-                    obraz = io.imread(sciezka_obrazu)
-                except IOError:
-                    print(f"Nie można otworzyć pliku {sciezka_obrazu}. Przechodzę do następnego.")
-                    continue
+    X = dane.drop('kategoria', axis=1)
+    y = dane['kategoria']
 
-                # Konwersja do skali szarości
-                if len(obraz.shape) == 3:
-                    obraz_szary = color.rgb2gray(obraz)
-                else:
-                    obraz_szary = obraz
-
-                # Redukcja głębi jasności do 5 bitów (64 poziomy)
-                obraz_64_poziomy = (obraz_szary * 63).astype(np.uint8)
+    # zbiór treningowy i testowy (80% trening, 20% test)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
-                glcm = graycomatrix(obraz_64_poziomy, distances=odleglosci, angles=katy, levels=64, symmetric=True, normed=True)
-
-                # Obliczanie cech tekstury dla każdej kombinacji odległości i kąta
-                for odleglosc in odleglosci:
-                    for kat in katy:
-                        glcm_single = graycomatrix(obraz_64_poziomy, distances=[odleglosc], angles=[kat], levels=64, symmetric=True, normed=True)
-                        dissimilarity = graycoprops(glcm_single, 'dissimilarity')[0, 0]
-                        correlation = graycoprops(glcm_single, 'correlation')[0, 0]
-                        contrast = graycoprops(glcm_single, 'contrast')[0, 0]
-                        energy = graycoprops(glcm_single, 'energy')[0, 0]
-                        homogeneity = graycoprops(glcm_single, 'homogeneity')[0, 0]
-                        ASM = graycoprops(glcm_single, 'ASM')[0, 0]
+    klasyfikator = SVC(kernel='linear')
 
 
-                        wektor_cech = {
-                            'kategoria': kategoria,
-                            'odleglosc': odleglosc,
-                            'kat': kat,
-                            'dissimilarity': dissimilarity,
-                            'correlation': correlation,
-                            'contrast': contrast,
-                            'energy': energy,
-                            'homogeneity': homogeneity,
-                            'ASM': ASM
-                        }
-                        wyniki.append(wektor_cech)
+    klasyfikator.fit(X_train, y_train)
 
 
-    df = pd.DataFrame(wyniki)
-    df.to_csv(wyjscie_csv, index=False)
-    print(f"Wyniki zapisano do pliku: {wyjscie_csv}")
+    y_pred = klasyfikator.predict(X_test)
+
+
+    dokladnosc = accuracy_score(y_test, y_pred)
+    print(f'Dokładność klasyfikatora SVM: {dokladnosc:.2f}')
+
+
+    print('\nRaport klasyfikacji:')
+    print(classification_report(y_test, y_pred))
+
+
+    macierz_pomylek = confusion_matrix(y_test, y_pred)
+
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(macierz_pomylek, annot=True, fmt='d', cmap='Blues', xticklabels=klasyfikator.classes_, yticklabels=klasyfikator.classes_)
+    plt.xlabel('Etykiety przewidywane')
+    plt.ylabel('Etykiety rzeczywiste')
+    plt.title('Macierz pomyłek dla klasyfikatora SVM')
+    plt.show()
 
 if __name__ == "__main__":
-    katalog_wejsciowy = "fragmenty"
-    wyjscie_csv = "cechy.csv" 
+    sciezka_csv = "cechy.csv"
 
-    przetworz_obrazy_i_oblicz_cechy(katalog_wejsciowy, wyjscie_csv)
+
+    dane = wczytaj_dane(sciezka_csv)
+
+    klasyfikacja_wektorow(dane)
