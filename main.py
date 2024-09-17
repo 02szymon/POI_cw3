@@ -1,63 +1,80 @@
-from PIL import Image
 import os
+import numpy as np
+import pandas as pd
+from skimage import io, color, exposure
+from skimage.feature import graycomatrix, graycoprops
 
-def wycinanie_fragmentow(katalog_wejsciowy, katalog_wyjsciowy, rozmiar_fragmentu=(128, 128)):
-    """
-    Funkcja wczytuje obrazy z katalogu wejściowego, wycina fragmenty o zadanym rozmiarze
-    i zapisuje je do odpowiednich katalogów reprezentujących kategorie tekstur.
+def przetworz_obrazy_i_oblicz_cechy(katalog_wejsciowy, wyjscie_csv):
 
-    :param katalog_wejsciowy: Ścieżka do katalogu wejściowego zawierającego obrazy
-    :param katalog_wyjsciowy: Ścieżka do katalogu wyjściowego, gdzie będą zapisywane fragmenty
-    :param rozmiar_fragmentu: Krotka określająca rozmiar fragmentu (szerokość, wysokość)
-    """
-    # Lista dostępnych kategorii tekstur
-    kategorie = ['drzwi', 'mata', 'tynk']
+    #Funkcja przetwarza obrazy z katalogu wejściowego, oblicza cechy tekstur
+    #na podstawie macierzy zdarzeń GLCM i zapisuje wyniki do pliku CSV.
 
-    # Utworzenie katalogu wyjściowego, jeśli nie istnieje
-    if not os.path.exists(katalog_wyjsciowy):
-        os.makedirs(katalog_wyjsciowy)
 
-    # Iterowanie przez katalogi reprezentujące kategorie tekstur
-    for kategoria in kategorie:
+    wyniki = []
+
+    # Definicja odległości i kątów do analizy
+    odleglosci = [1, 3, 5]
+    katy = [0, np.pi/4, np.pi/2, 3*np.pi/4]  # 0, 45, 90, 135 stopni
+
+
+    for kategoria in os.listdir(katalog_wejsciowy):
         sciezka_kategorii = os.path.join(katalog_wejsciowy, kategoria)
 
-        # Sprawdzenie, czy ścieżka jest katalogiem
         if os.path.isdir(sciezka_kategorii):
-            # Utworzenie katalogu docelowego dla tej kategorii
-            katalog_docelowy = os.path.join(katalog_wyjsciowy, kategoria)
-            if not os.path.exists(katalog_docelowy):
-                os.makedirs(katalog_docelowy)
-
-            # Iterowanie przez obrazy w danej kategorii
             for nazwa_obrazu in os.listdir(sciezka_kategorii):
                 sciezka_obrazu = os.path.join(sciezka_kategorii, nazwa_obrazu)
 
-                # Wczytanie obrazu
+
                 try:
-                    obraz = Image.open(sciezka_obrazu)
+                    obraz = io.imread(sciezka_obrazu)
                 except IOError:
                     print(f"Nie można otworzyć pliku {sciezka_obrazu}. Przechodzę do następnego.")
                     continue
 
-                szerokosc, wysokosc = obraz.size
-                szerokosc_fragmentu, wysokosc_fragmentu = rozmiar_fragmentu
+                # Konwersja do skali szarości
+                if len(obraz.shape) == 3:
+                    obraz_szary = color.rgb2gray(obraz)
+                else:
+                    obraz_szary = obraz
 
-                # Wycinanie fragmentów z obrazu
-                for x in range(0, szerokosc, szerokosc_fragmentu):
-                    for y in range(0, wysokosc, wysokosc_fragmentu):
-                        # Sprawdzenie, czy fragment mieści się w obrazie
-                        if x + szerokosc_fragmentu <= szerokosc and y + wysokosc_fragmentu <= wysokosc:
-                            fragment = obraz.crop((x, y, x + szerokosc_fragmentu, y + wysokosc_fragmentu))
+                # Redukcja głębi jasności do 5 bitów (64 poziomy)
+                obraz_64_poziomy = (obraz_szary * 63).astype(np.uint8)
 
-                            # Zapisanie fragmentu do odpowiedniego katalogu
-                            nazwa_fragmentu = f"{os.path.splitext(nazwa_obrazu)[0]}_{x}_{y}.png"
-                            sciezka_zapisu = os.path.join(katalog_docelowy, nazwa_fragmentu)
-                            fragment.save(sciezka_zapisu)
-                            print(f"Zapisano fragment: {sciezka_zapisu}")
+
+                glcm = graycomatrix(obraz_64_poziomy, distances=odleglosci, angles=katy, levels=64, symmetric=True, normed=True)
+
+                # Obliczanie cech tekstury dla każdej kombinacji odległości i kąta
+                for odleglosc in odleglosci:
+                    for kat in katy:
+                        glcm_single = graycomatrix(obraz_64_poziomy, distances=[odleglosc], angles=[kat], levels=64, symmetric=True, normed=True)
+                        dissimilarity = graycoprops(glcm_single, 'dissimilarity')[0, 0]
+                        correlation = graycoprops(glcm_single, 'correlation')[0, 0]
+                        contrast = graycoprops(glcm_single, 'contrast')[0, 0]
+                        energy = graycoprops(glcm_single, 'energy')[0, 0]
+                        homogeneity = graycoprops(glcm_single, 'homogeneity')[0, 0]
+                        ASM = graycoprops(glcm_single, 'ASM')[0, 0]
+
+
+                        wektor_cech = {
+                            'kategoria': kategoria,
+                            'odleglosc': odleglosc,
+                            'kat': kat,
+                            'dissimilarity': dissimilarity,
+                            'correlation': correlation,
+                            'contrast': contrast,
+                            'energy': energy,
+                            'homogeneity': homogeneity,
+                            'ASM': ASM
+                        }
+                        wyniki.append(wektor_cech)
+
+
+    df = pd.DataFrame(wyniki)
+    df.to_csv(wyjscie_csv, index=False)
+    print(f"Wyniki zapisano do pliku: {wyjscie_csv}")
 
 if __name__ == "__main__":
-    katalog_wejsciowy = "obrazy"  # Ścieżka do katalogu wejściowego z obrazami
-    katalog_wyjsciowy = "fragmenty"  # Ścieżka do katalogu wyjściowego
-    rozmiar_fragmentu = (256, 256)  # Rozmiar fragmentów
+    katalog_wejsciowy = "fragmenty"
+    wyjscie_csv = "cechy.csv" 
 
-    wycinanie_fragmentow(katalog_wejsciowy, katalog_wyjsciowy, rozmiar_fragmentu)
+    przetworz_obrazy_i_oblicz_cechy(katalog_wejsciowy, wyjscie_csv)
